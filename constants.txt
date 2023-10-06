@@ -1,0 +1,4 @@
+# Speed, MoveMent Threshold , Constant refresh rate , 
+0.7
+15
+800

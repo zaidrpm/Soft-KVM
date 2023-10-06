@@ -8,11 +8,16 @@ from evdev_xkb_map import evdev_xkb_map, modkeys
 import keymap
 from Xlib import X, display, Xutil
 from dbus.mainloop.glib import DBusGMainLoop
+from threading import Timer
 
 """
 Change this CONTROLLER_MAC to the mac of your own device
 """
 CONTROLLER_MAC = "18:56:80:AE:63:E7"
+X_WINDOW_DIMENSIONS=(1366,768)
+POINTER_SPEED=0.8 #Should be between 0.1 and 3
+POINTER_MOVEMENT_THRESHOLD=5
+CONSTANT_REFRESH_PERIOD=100
 
 usbhid_map = {}
 with open("keycode.txt") as f:
@@ -23,6 +28,16 @@ with open("keycode.txt") as f:
             usbhid_keyname = l[1]
             usbhid_map[usbhid_keycode] = usbhid_keyname
 
+def initConstants(j,eventCounter):
+    with open("constants.txt","r") as f:
+        lines=f.readlines()
+        global POINTER_SPEED
+        POINTER_SPEED=float(lines[1])
+        global POINTER_MOVEMENT_THRESHOLD
+        POINTER_MOVEMENT_THRESHOLD=int(lines[2])
+        global CONSTANT_REFRESH_PERIOD
+        CONSTANT_REFRESH_PERIOD=int(lines[3])
+        print('constant refreshed-',j,eventCounter)
 
 # Application window (only one)
 class Window(object):
@@ -34,7 +49,7 @@ class Window(object):
         self.screen = self.d.screen()
 
         self.window = self.screen.root.create_window(
-            50, 50, 640, 480, 2,
+            50, 50, X_WINDOW_DIMENSIONS[0], X_WINDOW_DIMENSIONS[1], 2,
             self.screen.root_depth,
             X.InputOutput,
             X.CopyFromParent,
@@ -117,14 +132,20 @@ class Window(object):
         hint_x = geometry.width // 5
         hint_y = geometry.height // 5
         hint_str = 'Press Ctrl+Alt+Shift+B to   Grab'.encode()
+        i=CONSTANT_REFRESH_PERIOD
+        j=1
+        eventCounter=0
         while 1:
+            if i==CONSTANT_REFRESH_PERIOD:
+                initConstants(j,eventCounter)
+                i=0
+                j+=1
+            i+=1
             e = self.d.next_event()
-
             # Window has been destroyed, quit
             if e.type == X.DestroyNotify:
                 print("Destroy")
                 sys.exit(0)
-
             if e.type == X.KeyPress:
                 usbhid_keycode = evdev_xkb_map[e.detail]
                 # print("key pressed: {}".format(usbhid_map[usbhid_keycode]))
@@ -198,29 +219,45 @@ class Window(object):
                         sys.exit(0)
             if e.type == X.MotionNotify:
                 #print("Motion: ({x},{y})".format(x=e.event_x, y=e.event_y))
-                if prev_x is not None and prev_y is not None:
-                    pos_x = max(-128, min(int((e.event_x - prev_x) * 2), 127))
+                if prev_x is None:
+                    prev_x=e.event_x
+                if prev_y is None:
+                    prev_y=e.event_y
+                #if prev_x is not None and prev_y is not None and (abs(prev_x-e.event_x)>POINTER_MOVEMENT_THRESHOLD or abs(prev_y-e.event_y)>POINTER_MOVEMENT_THRESHOLD):
+                if (abs(prev_x-e.event_x)>POINTER_MOVEMENT_THRESHOLD or abs(prev_y-e.event_y)>POINTER_MOVEMENT_THRESHOLD):
+                    pos_x = max(-128, min(int((e.event_x - prev_x) * POINTER_SPEED), 127))
                     mouse_state[3] = pos_x if pos_x >= 0 else (256 + pos_x)
-                    pos_y = max(-128, min(int((e.event_y - prev_y) * 2), 127))
+                    pos_y = max(-128, min(int((e.event_y - prev_y) * POINTER_SPEED), 127))
                     mouse_state[4] = pos_y if pos_y >= 0 else (256 + pos_y)
-                    #print("    ({},{})".format(mouse_state[3], mouse_state[4]))
                     send_call_back(bytes(mouse_state))
-                if e.event_x == geometry.width - 1:
-                    self.window.warp_pointer(1, e.event_y)
-                    prev_x = 1
-                elif e.event_x == 0:
-                    self.window.warp_pointer(geometry.width - 2, e.event_y)
-                    prev_x = geometry.width - 2
-                else:
                     prev_x = e.event_x
-                if e.event_y == geometry.height - 1:
-                    self.window.warp_pointer(e.event_x, 1)
-                    prev_y = 1
-                elif e.event_y == 0:
-                    self.window.warp_pointer(e.event_x, geometry.height - 2)
-                    prev_y = geometry.height - 2
-                else:
                     prev_y = e.event_y
+                    eventCounter+=1
+                '''if prev_x is not None and prev_y is not None:
+                    #pos_x = max(-128, min(int((e.event_x - prev_x) * 2), 127))
+                    mouse_state[3] = 128 + e.event_x - prev_x
+                    #pos_y = max(-128, min(int((e.event_y - prev_y) * 2), 127))
+                    mouse_state[4] = 128 + e.event_y - prev_y
+                    #print("    ({},{})".format(mouse_state[3], mouse_state[4]))
+                    send_call_back(bytes(mouse_state))'''
+
+                if e.event_x > geometry.width - 30:
+                    self.window.warp_pointer(50, e.event_y)
+                    prev_x = 50
+                elif e.event_x < 30:
+                    self.window.warp_pointer(geometry.width - 50, e.event_y)
+                    prev_x = geometry.width - 50
+                #else:
+                #    prev_x = e.event_x
+
+                if e.event_y > geometry.height - 30:
+                    self.window.warp_pointer(e.event_x, 50)
+                    prev_y = 50
+                elif e.event_y < 30:
+                    self.window.warp_pointer(e.event_x, geometry.height - 50)
+                    prev_y = geometry.height - 50
+                #else:
+                #    prev_y = e.event_y
 
 if __name__ == '__main__':
     DBusGMainLoop(set_as_default=True)
